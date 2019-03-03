@@ -1,0 +1,175 @@
+---
+title: "Practical Machine Learning Project"
+author: "DSLearner12"
+date: "March 3, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(gbm)
+```
+
+## Overview
+
+####Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  
+  
+We will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways.  
+
+More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+####Goal
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set.  
+
+##Data  
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+### Load the data  
+
+Examine to see nulls involved, reload fixing the nulls to all be in the NA format
+
+```{r loaddata ,cache=TRUE}
+tru<-"~/data/pml-training.csv"
+tsu<-"~/data/pml-testing.csv"
+training = read.csv(tru)
+#str(training)
+#reload with different variations of NA's
+training <- read.csv(tru, na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(tsu, na.strings=c("NA","#DIV/0!",""))
+#str(training)
+
+```
+The data is tidied up to focus on the types of events we are focusing on in the analysis. The data only includes observations on belt, forearm, arm, and dumbell, so only keep those, the user involved and the output (classe).  
+
+
+```{r tidydata,cache=TRUE}
+#only get the columns we care about
+
+#names(training)
+coltr = grepl("belt|arm|dumbell|classe|classe|user_name", names(training))
+train <- training[, coltr]
+#names(train)
+
+#  Do the same for test sample
+#names(testing)
+colts = grepl("belt|arm|dumbell|problem_id|user_name", names(testing))
+test <- testing[, colts]
+#names(test)
+#str(train)
+##str(train)
+##str(train$classe)
+##str(test)
+##str(test$problem_id)
+
+#Some columns in the data don't have valuesRemove them based on nulls in either set.
+
+cols.without.na = colSums(is.na(test)) == 0
+test = test[, cols.without.na]
+train = train[, cols.without.na]
+
+cols.without.na = colSums(is.na(train)) == 0
+test = test[, cols.without.na]
+train = train[, cols.without.na]
+#summary(train)
+#summary(test)
+#names(train)
+#names(test)
+
+#check for good variability
+zero.var = nearZeroVar(train, saveMetrics=TRUE)
+zero.var
+
+#variability is good so move one with training
+```
+
+##Create Train and validation sets  
+We will use the supplied Test set later.  
+Added parallel processing as the training is memory and cpu intensive.
+```{r traintestsets ,cache=TRUE}
+set.seed(1111)
+inTrain <- createDataPartition(train$classe, p=0.70, list=FALSE)
+train <- train[inTrain, ]
+validate <- train[-inTrain, ]
+
+#do pararallel processing as the training was taking too long
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv",number = 5, allowParallel = TRUE)
+```
+
+###Create Random Forest model
+```{r rfpar2, cache=TRUE}
+modRF <- train(classe ~ ., data = train, method = "rf", trControl = fitControl)
+predRF <- predict(modRF, validate)
+```
+```{r}
+confusionMatrix(predRF, validate$classe)$overall
+rfa<-confusionMatrix(predRF, validate$classe)$overall['Accuracy']
+```
+###Create Boosted Model
+```{r gbmpar2 , cache=TRUE}
+modGBM <- train(classe ~ ., data = train, method = "gbm",trControl = fitControl)
+
+predGBM <- predict(modGBM, validate) 
+
+```
+
+```{r}
+confusionMatrix(predGBM, validate$classe)$overall
+gbma<-confusionMatrix(predGBM, validate$classe)$overall['Accuracy']
+```
+###Create LDA model
+```{r ldapar2 , cache=TRUE}
+modLDA <- train(classe ~ ., data = train, method = "lda",trControl = fitControl)
+predLDA <- predict(modLDA, validate)
+
+```
+
+```{r}
+confusionMatrix(predLDA, validate$classe)$overall
+ldaa<-confusionMatrix(predLDA, validate$classe)$overall['Accuracy']
+```
+###Create Combined Model
+```{r combopar2 , cache=TRUE}
+#Stack the predictions together using random forests ("rf")
+combine <- data.frame(predRF, predGBM, predLDA, classe = validate$classe)
+modCombined <- train(classe ~ ., combine, method = "rf")
+predCombined <- predict(modCombined, validate)
+
+stopCluster(cluster)
+registerDoSEQ()
+
+```
+
+```{r}
+confusionMatrix(validate$classe, predCombined)$overall
+ca<-confusionMatrix(validate$classe, predCombined)$overall['Accuracy']
+```
+#What are the model's resulting accuracy against the validation set? 
+```{r}
+rfa
+gbma
+ldaa
+ca
+
+predtest <- predict(modRF, newdata=test)
+```
+
+#Winners - Random Forest and Combined
+Random Forest is equivalent to the combined method in accuracy and error rates(error=1-accuracy).  We will use Random Forest for the test set.  
+
+#Apply to the test set for the problems (intentionally not included)
+
+
+
